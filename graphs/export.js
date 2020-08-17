@@ -63,8 +63,7 @@ function exportPolblogs() {
 
 function saveIgraphJSON(json, name) {
     const string = Object.entries(json).map(([key, value]) => {
-        const valueString = Array.isArray(value) ? `[${String(value)}]` : String(value);
-        return `  "${key}": ${valueString}`
+        return `  "${key}": ${JSON.stringify(value)}`
     }).join(',\n');
 
     fs.writeFileSync(`${__dirname}/igraph/${name}.igraph.json`, `{\n${string}\n}`);
@@ -143,6 +142,7 @@ function exportParsedGraphFactory(filename, communityAttributePath, deltaIds = 0
         assert.strictEqual(m * 2, edges.length);
 
         saveIgraphJSON(process({
+            name: filename,
             n,
             m,
             communities,
