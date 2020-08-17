@@ -1,0 +1,22 @@
+{
+  "name": "community-detection-benchmark",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rthrs/community-detection-benchmark.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/rthrs/community-detection-benchmark/issues"
+  },
+  "homepage": "https://github.com/rthrs/community-detection-benchmark#readme",
+  "dependencies": {
+    "ramda": "^0.27.1"
+  }
+}
