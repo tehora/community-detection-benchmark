@@ -1,6 +1,7 @@
 const { identity, flatten, path } = require('ramda');
 const fs = require('fs');
 const assert = require('assert');
+const { stringifyJSON } = require('../core/utils.js');
 
 main();
 
@@ -62,11 +63,8 @@ function exportPolblogs() {
 }
 
 function saveIgraphJSON(json, name) {
-    const string = Object.entries(json).map(([key, value]) => {
-        return `  "${key}": ${JSON.stringify(value)}`
-    }).join(',\n');
-
-    fs.writeFileSync(`${__dirname}/igraph/${name}.igraph.json`, `{\n${string}\n}`);
+    const string = stringifyJSON(json);
+    fs.writeFileSync(`${__dirname}/igraph/${name}.igraph.json`, string);
 }
 
 function readGML(filename) {

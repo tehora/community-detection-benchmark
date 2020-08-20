@@ -2,13 +2,9 @@ const Community = require('./Community.js');
 
 class Graph {
     constructor(data) {
-        this.fromJSON(data);
-    }
-
-    fromJSON(json) {
-        this.json = json;
-        this.groundTruthMembership = json.membership;
-        this.groundTruthCommunities = Community.getCommunitiesFromMembership(json.membership)
+        this.data = data;
+        this.groundTruthMembership = data.membership;
+        this.groundTruthCommunities = Community.getCommunitiesFromMembership(data.membership)
     }
 }
 

@@ -33,17 +33,29 @@ class Community {
 
     intersect(community) {
         const intersection = [];
-        const [ filterable, comparable ] = this.nodes.size < community.nodes.size
+        const [filterable, comparable] = this.nodes.size < community.nodes.size
             ? [this.nodes, community.nodes]
             : [community.nodes, this.nodes];
 
         filterable.forEach((node) => {
-            if (comparable.hasNode(node)) {
+            if (comparable.has(node)) {
                 intersection.push(node);
             }
         });
 
         return new Community(intersection);
+    }
+
+    difference(community) {
+        const difference = [];
+
+        this.nodes.forEach((node) => {
+            if (!community.hasNode(node)) {
+                difference.push(node);
+            }
+        });
+
+        return new Community(difference);
     }
 
     get size() {
