@@ -41,7 +41,7 @@ const MODIFIED_ALGORITHMS_COUNTERPARTS = {
 const PARAMETERS_STUB = {
     [PARAMETERS.SEED_COUNT]: undefined, // range(1, graph.communities + 1)
     [PARAMETERS.SEED_SIZE]: [5, 10, 25, 50],
-    [PARAMETERS.COMPOSITION_RATIO]: [0, 25, 50, 75, 100],
+    [PARAMETERS.COMPOSITION_RATIO]: [0, 25, 50, 75, 100], // how many FP vertices should contribute to seed community
     [PARAMETERS.SEED_STRUCTURE]: [
         RANDOM_STRUCTURE,
         // CONNECTED_STRUCTURE

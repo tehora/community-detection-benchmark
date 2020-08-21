@@ -19,6 +19,7 @@ class Community {
     }
 
     constructor(nodes = []) {
+        this.id = Community.lastFreeId++;
         const array = Array.isArray(nodes) ? nodes : [nodes];
         this.nodes = new Set(array);
     }
@@ -46,7 +47,7 @@ class Community {
         return new Community(intersection);
     }
 
-    difference(community) {
+    subtract(community) {
         const difference = [];
 
         this.nodes.forEach((node) => {
@@ -62,5 +63,7 @@ class Community {
         return this.nodes.size;
     }
 }
+
+Community.lastFreeId = 0;
 
 module.exports = Community;

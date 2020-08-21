@@ -1,5 +1,6 @@
 const fs = require('fs');
-const { isNil, range, fromPairs, values, map, clamp, min, forEach, omit } = require('ramda');
+const cliProgress = require('cli-progress');
+const { isNil, range, fromPairs, values, map, clamp, min, reduce } = require('ramda');
 const { getAPI: getCommunityDetectionAPI } = require('igraph-community');
 
 const { stringifyJSON } = require('../core/utils.js');
@@ -12,12 +13,19 @@ const {
     RANDOM_STRUCTURE, CONNECTED_STRUCTURE
 } = require('./constants');
 
+
 class Benchmark {
     constructor() {
-        this.baseline = fromPairs(map((graph) => [graph.name, {}], GRAPHS));
         this.runCommunityDetection = null;
         this.compareCommunitiesNMI = null;
-        this.result = [];
+
+        this.baseline = fromPairs(map((graph) => [graph.name, {}], GRAPHS));
+        this.result = {};
+
+        this.flatBaseline = [];
+        this.flatResult = [];
+
+        this.bar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
     }
 
     start() {
@@ -32,152 +40,294 @@ class Benchmark {
     }
 
     calculateBaseline(graph) {
+        const { n, edges, name: graphName } = graph.data;
         for (let algorithmName of values(BASELINE_ALGORITHMS)) {
-            const { modularity, membership } = this.runCommunityDetection(algorithmName, graph.n, graph.edges);
+            const { modularity, membership } = this.runCommunityDetection(algorithmName, n, edges);
 
-            const nmi = this.compareCommunitiesNMI(graph.membership, membership);
+            const nmi = this.compareCommunitiesNMI(graph.groundTruthMembership, membership);
             const communities = Community.getCommunitiesFromMembership(membership);
             const communitiesCount = communities.length;
 
-            this.baseline[graph.name][algorithmName] = {
-                    membership,
-                    modularity,
-                    communities,
-                    communitiesCount,
-                    nmi
+            const maxTpCommunities = {}; // key is community id
+
+            for (let gt of graph.groundTruthCommunities) {
+                let tp = null;
+
+                for (let community of communities) {
+                    const currentTp = gt.intersect(community);
+                    if (isNil(tp) || currentTp.size > tp.size) {
+                        tp = currentTp;
+                    }
+                }
+
+                const fn = gt.subtract(tp);
+                maxTpCommunities[gt.id] = { tp, fn };
             }
+
+            // console.log(maxTpCommunities)
+
+            this.baseline[graphName][algorithmName] = {
+                membership,
+                modularity,
+                communities,
+                maxTpCommunities,
+                communitiesCount,
+                nmi
+            };
+
+            this.flatBaseline.push({
+                id: this.flatBaseline.length,
+                graph: graphName,
+                algorithm: algorithmName,
+                membership,
+                modularity,
+                nmi,
+                communitiesCount
+            })
         }
     }
 
     runBenchmark() {
-        // const iterations = GRAPHS.length
-        let resultId = 0;
+        const constantPerGraphSteps = reduce(
+            (val, opts) => {
+                return val * (Array.isArray(opts) ? opts.length : 1);
+            }, 1, values(PARAMETERS_STUB)) * values(MODIFIED_ALGORITHMS).length;
+
+        const steps = reduce((val, graph) => {
+            return val + (constantPerGraphSteps *  graph.communities);
+        }, 0 , GRAPHS);
+
+        this.bar.start(steps, 0);
+        let iterations = 0;
 
         for (let graphJSON of GRAPHS) {
             const graph = new Graph(graphJSON);
+            const graphName = graphJSON.name;
 
             const options = {
                 ...PARAMETERS_STUB,
                 [PARAMETERS.SEED_COUNT]: range(1, graphJSON.communities + 1)
             };
 
-            this.calculateBaseline(graphJSON);
+            this.calculateBaseline(graph);
             // continue;
 
-            for (let seedCount of options[PARAMETERS.SEED_COUNT]) { // 1
-                for (let seedSize of options[PARAMETERS.SEED_SIZE]) { // 2
-                    for (let compositionRatio of options[PARAMETERS.COMPOSITION_RATIO]) { // 3
-                        for (let seedStructure of options[PARAMETERS.SEED_STRUCTURE]) { // 4
+            this.result[graphName] = {};
+
+            for (let seedCountParam of options[PARAMETERS.SEED_COUNT]) { // 1
+                this.result[graphName][seedCountParam] = {};
+
+                let prevSeedSizeParam = undefined;
+                for (let seedSizeParam of options[PARAMETERS.SEED_SIZE]) { // 2
+                    this.result[graphName][seedCountParam][seedSizeParam] = {};
+
+                    for (let compositionRatioParam of options[PARAMETERS.COMPOSITION_RATIO]) { // 3
+                        this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam] = {};
+
+                        for (let seedStructureParam of options[PARAMETERS.SEED_STRUCTURE]) { // 4
+                            this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam][seedStructureParam] = {};
+
                             const parameters = {
-                                seedCount,
-                                seedSize,
-                                compositionRatio,
-                                seedStructure
+                                seedCountParam,
+                                seedSizeParam,
+                                compositionRatioParam,
+                                seedStructureParam
                             };
 
                             for (let algorithmName of values(MODIFIED_ALGORITHMS)) {
-                                const baselineAlgorithmName = MODIFIED_ALGORITHMS_COUNTERPARTS[algorithmName];
-                                const seedMembership = this.seedMembershipFactory(graph, baselineAlgorithmName, parameters);
+                                const {
+                                    seedMembership,
+                                    declaredSeedCommunitySizes,
+                                    realSeedCommunitySizes,
+                                    realSeedCommunityCompositionRatio
+                                } = this.seedMembershipFactory(graph, algorithmName, { ...parameters, prevSeedSizeParam });
 
                                 const {
                                     membership,
                                     modularity
                                 } = this.runCommunityDetection(algorithmName, graphJSON.n, graphJSON.edges, { seedMembership });
 
-                                // const f1Score = TODO?
                                 const nmi = this.compareCommunitiesNMI(graph.groundTruthMembership, membership);
-                                const communitiesCount = getMaxValue(membership);
+                                const communitiesCount = getMaxValue(membership) + 1;
 
-                                const resultRow = {
-                                    resultId,
-                                    graph: graphJSON.name,
-                                    algorithm: algorithmName,
-                                    parameters,
+                                const payload = {
                                     seedMembership,
-                                    membership: membership,
+                                    membership,
                                     modularity,
                                     nmi,
                                     communitiesCount
                                 };
 
-                                this.result.push(resultRow);
-                                resultId++;
+                                this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam][seedStructureParam][algorithmName] = payload;
+
+                                this.flatResult.push({
+                                    id: this.flatResult.length,
+                                    graph: graphName,
+                                    algorithm: algorithmName,
+
+                                    ...parameters,
+                                    seedSizeParam: seedSizeParam / 100,
+                                    compositionRatioParam: compositionRatioParam / 100,
+
+                                    ...payload,
+
+                                    declaredSeedCommunitySizes,
+                                    realSeedCommunitySizes,
+                                    realSeedCommunityCompositionRatio
+                                });
+
+                                this.bar.update(++iterations);
                             }
                         }
                     }
+                    prevSeedSizeParam = seedSizeParam;
                 }
             }
         }
-
-        console.log(`LAST RESULT ID: ${resultId}`);
+        this.bar.stop();
     }
 
-
-    seedMembershipFactory(graph, baselineAlgorithmName, { seedCount, seedSize, compositionRatio, seedStructure }) {
+    // FIXME get rif of prevCompositionRatio
+    seedMembershipFactory(graph, algorithmName, { seedCountParam, seedSizeParam, compositionRatioParam, seedStructureParam, prevSeedSizeParam, prevCompositionRatioParam }) {
         const { n, name: graphName } = graph.data;
-        const seedMembership = (new Array(n)).fill(-1);
 
-        // 1. Pick ground-truth (GT) communities randomly based on seedCount
-        const gts = getRandomItems(graph.groundTruthCommunities, seedCount);
+        // We'd like to expand previously picked seeds for better comprehension of the algorithms..
+        const baselineAlgorithmName = MODIFIED_ALGORITHMS_COUNTERPARTS[algorithmName];
+        const prevSeedMembership = isNil(prevSeedSizeParam)
+            ? undefined
+            : this.result[graphName][seedCountParam][prevSeedSizeParam][compositionRatioParam][seedStructureParam][algorithmName].seedMembership;
+        const seedMembership = isNil(prevSeedMembership) ? (new Array(n)).fill(-1) : [...prevSeedMembership];
 
-        for (let i = 0; i < gts.length; i++) {
-            const gt = gts[i]; // i is also current seed community id
+
+        const alreadyPickedSeedCommunitiesIds = new Set();
+        for (let nodeId = 0; nodeId < seedMembership.length; nodeId++) {
+            const seedCommunityId = seedMembership[nodeId];
+            if (seedCommunityId !== -1) {
+                alreadyPickedSeedCommunitiesIds.add(seedCommunityId);
+            }
+        }
+        // console.log({ alreadyPickedSeedCommunitiesIds, seedMembership});
+
+        // 1. Pick ground-truth (GT) communities randomly based on seedCountParam
+        // unless we work on previously picked communities...
+        const gtsIds = alreadyPickedSeedCommunitiesIds.size === 0
+            ? getRandomItems(graph.groundTruthCommunities, seedCountParam).indexes
+            : alreadyPickedSeedCommunitiesIds.values();
+
+        const declaredSeedCommunitySizes = [];
+        const realSeedCommunitySizes = [];
+        const realSeedCommunityCompositionRatio = [];
+
+        for (let seedCommunityId of gtsIds) {
+        // for (let seedCommunityId = 0; seedCommunityId < gts.length; seedCommunityId++) {
+            const gt = graph.groundTruthCommunities[seedCommunityId];
+
+            const alreadyPickedNodes = new Community();
+            for (let nodeId = 0; nodeId < seedMembership.length; nodeId++) {
+                if (seedMembership[nodeId] === seedCommunityId) {
+                    alreadyPickedNodes.addNode(nodeId);
+                }
+            }
+            const alreadyPickedNodesSize = alreadyPickedNodes.size;
 
             // 2. Pick maximum size of seed community; min size is 2, max is actual GT size
-            const seedCommunitySize = clamp(2, gt.size, Math.floor(gt.size * (seedSize / 100)));
+            const seedCommunitySize = clamp(2, gt.size, Math.floor(gt.size * (seedSizeParam / 100)));
+            declaredSeedCommunitySizes.push(seedCommunitySize);
 
-            // 3. Compute true positive (TP) sets, i.e. intersection of gt with each community found by algorithm
+            // 3. Compute true positive (TP) sets, seedCommunityId.e. intersection of gt with each community found by algorithm
             // 4. Found the biggest TP and work on it
-            let tp = null;
-
-            forEach(
-                (community) => {
-                    const currentTp = gt.intersect(community);
-                    if (isNil(tp) || currentTp.size > tp.size) {
-                        tp = currentTp;
-                    }
-                },
-                this.baseline[graphName][baselineAlgorithmName].communities
-            );
-
-            const fn = gt.difference(tp);
+            const { tp, fn } = this.baseline[graphName][baselineAlgorithmName].maxTpCommunities[gt.id];
 
             // 5. Get mix of composition; maximum number of nodes in each TP or FN sets is defined by either TP size or its complement
-            // FIXME BIGGER SEEDS should be based on previous ones....
-            const mixFactor = compositionRatio / 100;
+            // 0 = only TPs; 1 = only FNs --> how many FP vertices should contribute...
+            const mixFactor = 1 - (compositionRatioParam / 100);
 
-            const maxTpVerticesSize = min(Math.floor(seedCommunitySize * mixFactor), tp.size);
-            const maxFnVerticesSize = min(seedCommunitySize - maxTpVerticesSize, fn.size);
+            // NEW SEEDS ARE BASED ON PREVIOUSLY PICKED!!
+            const remainingTp = tp.subtract(alreadyPickedNodes);
+            const remainingFn = fn.subtract(alreadyPickedNodes);
+
+            const alreadyPickedTpNodesSize = tp.intersect(alreadyPickedNodes).size;
+
+            let maxTpVerticesSize = min(Math.floor(seedCommunitySize * mixFactor), tp.size);
+            let maxFnVerticesSize = min(seedCommunitySize - maxTpVerticesSize, fn.size);
+
+            maxTpVerticesSize -= alreadyPickedTpNodesSize;
+            maxFnVerticesSize -= (alreadyPickedNodesSize - alreadyPickedTpNodesSize);
+
+            // console.log({ maxTpVerticesSize, maxFnVerticesSize, seedCommunityId, alreadyPickedNodes, tp, gt})
+
+            // NOTE: WHEN tp equals gt, then fn are empty - for 0 mixFactor we have empty seeds then, so let's pick,  some remaining from tp....
+            // let remainingCount = seedCommunitySize - (alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize);
+            // if (remainingCount > 0 && mixFactor) {
+            //     // first select nodes from tp
+            //     maxTpVerticesSize += clamp(0, remainingCount, remainingTp.size - maxTpVerticesSize);
+            // }
+            //
+            // remainingCount = seedCommunitySize - (alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize);
+            // if (remainingCount > 0) {
+            //     // if still some remains then pick from fn
+            //     maxTpVerticesSize += clamp(0, remainingCount, remainingFn.size - maxFnVerticesSize);
+            // }
+            /////
+
 
             // 6. Pick current seed community vertices based on structure parameter
-            if (seedStructure === RANDOM_STRUCTURE) {
+            if (seedStructureParam === RANDOM_STRUCTURE) {
                 // FIXME would be good if not connected...
-                const tpVertices = getRandomItems([...tp.nodes], maxTpVerticesSize);
-                const fnVertices = getRandomItems([...fn.nodes], maxFnVerticesSize);
+                const tpVertices = getRandomItems([...remainingTp.nodes], maxTpVerticesSize).result;
+                const fnVertices = getRandomItems([...remainingFn.nodes], maxFnVerticesSize).result;
 
                 for (let idx of tpVertices) {
-                    seedMembership[idx] = i;
+                    seedMembership[idx] = seedCommunityId;
                 }
                 for (let idx of fnVertices) {
-                    seedMembership[idx] = i;
+                    seedMembership[idx] = seedCommunityId;
                 }
-            } else if (seedStructure === CONNECTED_STRUCTURE) {
+
+                const realSize = alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize;
+                realSeedCommunitySizes.push(realSize);
+                realSeedCommunityCompositionRatio.push(realSize === 0
+                    ? -1 // to avoid NaNs
+                    : 1 - (alreadyPickedTpNodesSize + maxTpVerticesSize) /  realSize);
+
+            } else if (seedStructureParam === CONNECTED_STRUCTURE) {
                 // TODO
                 throw new Error('TODO')
             } else {
                 throw new Error('UNKNOWN SEED STRUCTURE PARAMETER')
             }
+
+            // console.log('>>>>>', {
+            //     gtSize: gt.size,
+            //     alreadyPickedNodesSize,
+            //     seedSizeParam,
+            //     seedCommunitySize,
+            //     compositionRatioParam,
+            //     mixFactor,
+            //     RTP_NSIZE: remainingTp.size,
+            //     RFN_NSIZE: remainingFn.size,
+            //     alreadyPickedTpNodesSize,
+            //     maxTpVerticesSize,
+            //     maxFnVerticesSize
+            // });
         }
 
-        return seedMembership;
+        // At the end we'd probably like to filter out results with weak real seeds sizes and composition ratios...
+        return {
+            seedMembership,
+            declaredSeedCommunitySizes,
+            realSeedCommunitySizes,
+            realSeedCommunityCompositionRatio
+        };
     }
 
     saveResult() {
         const resultString = stringifyJSON({
-            baseline: map(f => map(s => omit(['communities'], s), f), this.baseline),
-            result: this.result
+            baseline: this.flatBaseline,
+            result: this.flatResult
         });
-        fs.writeFileSync(`${__dirname}/../output/benchmark.json`, resultString);
+        const timestamp = new Date().toISOString();
+        fs.writeFileSync(`${__dirname}/../output/benchmark-${timestamp}.json`, resultString);
     }
 }
 
@@ -185,23 +335,33 @@ function getRandomItems(arr, n) {
     let len = arr.length;
 
     if (len === n) {
-        return arr;
+        return {
+            result: arr,
+            indexes: range(0, len)
+        };
     }
 
     const result = new Array(n);
+    const indexes = new Array(n);
     const taken = new Array(len);
 
     if (n > len) {
-        throw new RangeError("getRandomItems: more elements taken than available");
+        console.warn("getRandomItems: more elements taken than available");
+        n = len;
     }
 
     while (n--) {
         const x = Math.floor(Math.random() * len);
-        result[n] = arr[x in taken ? taken[x] : x];
+        const idx = x in taken ? taken[x] : x;
+        result[n] = arr[idx];
+        indexes[n] = idx;
         taken[x] = --len in taken ? taken[len] : len;
     }
 
-    return result;
+    return {
+        result,
+        indexes
+    };
 }
 
 function getMaxValue(arr) {

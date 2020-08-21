@@ -16,6 +16,7 @@
   },
   "homepage": "https://github.com/rthrs/community-detection-benchmark#readme",
   "dependencies": {
+    "cli-progress": "^3.8.2",
     "igraph-community": "git+https://github.com/rthrs/igraph-community.js.git",
     "ramda": "^0.27.1"
   }
