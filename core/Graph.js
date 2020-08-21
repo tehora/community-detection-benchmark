@@ -1,4 +1,4 @@
-const { isNil } = require('ramda');
+const { isNil, values, find } = require('ramda');
 
 const Community = require('./Community.js');
 
@@ -10,6 +10,8 @@ class Graph {
         this.groundTruthCommunities = Community.getCommunitiesFromMembership(data.membership);
 
         this.createRepresentation();
+
+        this.nodesRanking = this.getNodesRanking();
     }
 
     createRepresentation() {
@@ -36,31 +38,69 @@ class Graph {
         }
     }
 
-    // first filter nodes by gt TODO composition ratio + based on prev
-    rankedPartialBFS(n, nodesRanking) {
-        const selected = [];
-
-        const queue = [nodesRanking[0]];
-        const visited = new Set();
+    // TODO composition ratio !!!
+    rankedPartialBFS(n, allowedNodes, currentQueue = null, currentVisited = null) {
+        const queue = isNil(currentQueue) ? [find((node) => allowedNodes.has(node.id), this.nodesRanking)] : currentQueue;
+        const visited = isNil(currentVisited) ? new Set() : currentVisited;
 
         while (queue.length > 0 && n-- > 0) {
-            const node = queue.shift();
-            const { neighbours } = nodesRanking;
-            const rankedNeighbours = nodesRanking.filter((node) => neighbours.has(node) && !visited.has(node));
+            const headNode = queue.shift();
+            const { neighbours } = headNode;
 
-            selected.push(node);
-            visited.add(node);
+            // console.log('HERE!', currentQueue, queue, headNode, neighbours, visited, allowedNodes)
+
+            // TODO THIS IS PROBABLY SLOWs
+            const rankedNeighbours = this.nodesRanking
+                .filter((node) => neighbours.has(node) && !visited.has(node.id) && allowedNodes.has(node.id));
+
+            if (!visited.has(headNode)) {
+                visited.add(headNode.id);
+            }
 
             for (let i = 0; i < rankedNeighbours.length; i++) {
-                queue.push()
+                queue.push(rankedNeighbours[i]);
             }
         }
 
-        return selected;
+        return {
+            visited,
+            queue
+        }
     }
 
-    getNodesRanking(communities) {
+    getNodesRanking(communities = this.groundTruthCommunities) {
+        const linksToOtherCommunitiesByNodeId = {};
+
+        for (let community of communities) {
+            for (let nodeId of community.nodes.values()) {
+                let linksToOther = 0;
+                this.nodesById[nodeId].neighbours.forEach((neigh) => {
+                    if (!community.hasNode(neigh.id)) {
+                        linksToOther++;
+                    }
+                });
+                linksToOtherCommunitiesByNodeId[nodeId] = linksToOther;
+            }
+        }
+
         // Sort nodes by links to other communities (asc); degree (desc); in case of ties shuffle randomly
+        // First node has the highest ranking
+        return values(this.nodesById).sort((a, b) => {
+            const aOtherLinks = linksToOtherCommunitiesByNodeId[a.id];
+            const bOtherLinks = linksToOtherCommunitiesByNodeId[b.id];
+
+            if (aOtherLinks === bOtherLinks) {
+                if (a.degree === b.degree) {
+                    // randomly select in case of ties
+                    return Math.random() > 0.5 ? -1 : 1;
+                }
+                // higher degree the better
+                return b.degree - a.degree
+            }
+
+            // less links to other communities the better
+            return aOtherLinks - bOtherLinks;
+        })
     }
 }
 
@@ -78,12 +118,5 @@ class Node {
         return this.neighbours.size;
     }
 }
-
-// WHAT WE NEED:
-// - run algorithm on graph
-// - know ground truth
-// - from communities
-// - toss vertices from community / set
-// - bfs on community sub graph.....
 
 module.exports = Graph;

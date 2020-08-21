@@ -139,7 +139,8 @@ class Benchmark {
                                     seedMembership,
                                     declaredSeedCommunitySizes,
                                     realSeedCommunitySizes,
-                                    realSeedCommunityCompositionRatio
+                                    realSeedCommunityCompositionRatio,
+                                    queueBFS
                                 } = this.seedMembershipFactory(graph, algorithmName, { ...parameters, prevSeedSizeParam });
 
                                 const {
@@ -150,15 +151,10 @@ class Benchmark {
                                 const nmi = this.compareCommunitiesNMI(graph.groundTruthMembership, membership);
                                 const communitiesCount = getMaxValue(membership) + 1;
 
-                                const payload = {
+                                this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam][seedStructureParam][algorithmName] = {
                                     seedMembership,
-                                    membership,
-                                    modularity,
-                                    nmi,
-                                    communitiesCount
+                                    queueBFS
                                 };
-
-                                this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam][seedStructureParam][algorithmName] = payload;
 
                                 this.flatResult.push({
                                     id: this.flatResult.length,
@@ -169,7 +165,11 @@ class Benchmark {
                                     seedSizeParam: seedSizeParam / 100,
                                     compositionRatioParam: compositionRatioParam / 100,
 
-                                    ...payload,
+                                    seedMembership,
+                                    membership,
+                                    modularity,
+                                    nmi,
+                                    communitiesCount,
 
                                     declaredSeedCommunitySizes,
                                     realSeedCommunitySizes,
@@ -198,7 +198,6 @@ class Benchmark {
             : this.result[graphName][seedCountParam][prevSeedSizeParam][compositionRatioParam][seedStructureParam][algorithmName].seedMembership;
         const seedMembership = isNil(prevSeedMembership) ? (new Array(n)).fill(-1) : [...prevSeedMembership];
 
-
         const alreadyPickedSeedCommunitiesIds = new Set();
         for (let nodeId = 0; nodeId < seedMembership.length; nodeId++) {
             const seedCommunityId = seedMembership[nodeId];
@@ -217,6 +216,7 @@ class Benchmark {
         const declaredSeedCommunitySizes = [];
         const realSeedCommunitySizes = [];
         const realSeedCommunityCompositionRatio = [];
+        let queueBFS = undefined;
 
         for (let seedCommunityId of gtsIds) {
         // for (let seedCommunityId = 0; seedCommunityId < gts.length; seedCommunityId++) {
@@ -270,6 +270,7 @@ class Benchmark {
             // }
             /////
 
+            let realSize = alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize;
 
             // 6. Pick current seed community vertices based on structure parameter
             if (seedStructureParam === RANDOM_STRUCTURE) {
@@ -283,19 +284,28 @@ class Benchmark {
                 for (let idx of fnVertices) {
                     seedMembership[idx] = seedCommunityId;
                 }
-
-                const realSize = alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize;
-                realSeedCommunitySizes.push(realSize);
-                realSeedCommunityCompositionRatio.push(realSize === 0
-                    ? -1 // to avoid NaNs
-                    : 1 - (alreadyPickedTpNodesSize + maxTpVerticesSize) /  realSize);
-
             } else if (seedStructureParam === CONNECTED_STRUCTURE) {
-                // TODO
-                throw new Error('TODO')
+                const currentVisited = alreadyPickedNodes.nodes;
+                const currentQueue = currentVisited.size > 0
+                    ? this.result[graphName][seedCountParam][prevSeedSizeParam][compositionRatioParam][seedStructureParam][algorithmName].queueBFS
+                    : undefined;
+
+                const n = maxTpVerticesSize + maxFnVerticesSize;
+                const { visited, queue } = graph.rankedPartialBFS(n, gt.nodes, currentQueue, currentVisited);
+                queueBFS = queue;
+
+                for (let idx of visited) {
+                    seedMembership[idx] = seedCommunityId;
+                }
+
             } else {
                 throw new Error('UNKNOWN SEED STRUCTURE PARAMETER')
             }
+
+            realSeedCommunitySizes.push(realSize);
+            realSeedCommunityCompositionRatio.push(realSize === 0
+                ? -1 // to avoid NaNs
+                : 1 - (alreadyPickedTpNodesSize + maxTpVerticesSize) /  realSize);
 
             // console.log('>>>>>', {
             //     gtSize: gt.size,
@@ -317,7 +327,8 @@ class Benchmark {
             seedMembership,
             declaredSeedCommunitySizes,
             realSeedCommunitySizes,
-            realSeedCommunityCompositionRatio
+            realSeedCommunityCompositionRatio,
+            queueBFS
         };
     }
 

@@ -44,7 +44,7 @@ const PARAMETERS_STUB = {
     [PARAMETERS.COMPOSITION_RATIO]: [0, 25, 50, 75, 100], // how many FP vertices should contribute to seed community
     [PARAMETERS.SEED_STRUCTURE]: [
         RANDOM_STRUCTURE,
-        // CONNECTED_STRUCTURE
+        CONNECTED_STRUCTURE
     ]
 };
 
