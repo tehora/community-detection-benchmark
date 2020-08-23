@@ -117,15 +117,15 @@ class Benchmark {
             for (let seedCountParam of options[PARAMETERS.SEED_COUNT]) { // 1
                 this.result[graphName][seedCountParam] = {};
 
-                let prevSeedSizeParam = undefined;
-                for (let seedSizeParam of options[PARAMETERS.SEED_SIZE]) { // 2
-                    this.result[graphName][seedCountParam][seedSizeParam] = {};
+                for (let seedStructureParam of options[PARAMETERS.SEED_STRUCTURE]) { // 2
+                    this.result[graphName][seedCountParam][seedStructureParam] = {};
 
                     for (let compositionRatioParam of options[PARAMETERS.COMPOSITION_RATIO]) { // 3
-                        this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam] = {};
+                        this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam] = {};
 
-                        for (let seedStructureParam of options[PARAMETERS.SEED_STRUCTURE]) { // 4
-                            this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam][seedStructureParam] = {};
+                        let prevSeedSizeParam = undefined;
+                        for (let seedSizeParam of options[PARAMETERS.SEED_SIZE]) { // 4 - seed count at last to make sure results are sorted by enlarging seed sets based on prev values
+                            this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][seedSizeParam] = {};
 
                             const parameters = {
                                 seedCountParam,
@@ -151,7 +151,7 @@ class Benchmark {
                                 const nmi = this.compareCommunitiesNMI(graph.groundTruthMembership, membership);
                                 const communitiesCount = getMaxValue(membership) + 1;
 
-                                this.result[graphName][seedCountParam][seedSizeParam][compositionRatioParam][seedStructureParam][algorithmName] = {
+                                this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][seedSizeParam][algorithmName] = {
                                     seedMembership,
                                     queueBFS
                                 };
@@ -178,24 +178,23 @@ class Benchmark {
 
                                 this.bar.update(++iterations);
                             }
+                            prevSeedSizeParam = seedSizeParam;
                         }
                     }
-                    prevSeedSizeParam = seedSizeParam;
                 }
             }
         }
         this.bar.stop();
     }
 
-    // FIXME get rif of prevCompositionRatio
-    seedMembershipFactory(graph, algorithmName, { seedCountParam, seedSizeParam, compositionRatioParam, seedStructureParam, prevSeedSizeParam, prevCompositionRatioParam }) {
+    seedMembershipFactory(graph, algorithmName, { seedCountParam, seedSizeParam, compositionRatioParam, seedStructureParam, prevSeedSizeParam }) {
         const { n, name: graphName } = graph.data;
 
         // We'd like to expand previously picked seeds for better comprehension of the algorithms..
         const baselineAlgorithmName = MODIFIED_ALGORITHMS_COUNTERPARTS[algorithmName];
         const prevSeedMembership = isNil(prevSeedSizeParam)
             ? undefined
-            : this.result[graphName][seedCountParam][prevSeedSizeParam][compositionRatioParam][seedStructureParam][algorithmName].seedMembership;
+            : this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][prevSeedSizeParam][algorithmName].seedMembership;
         const seedMembership = isNil(prevSeedMembership) ? (new Array(n)).fill(-1) : [...prevSeedMembership];
 
         const alreadyPickedSeedCommunitiesIds = new Set();
@@ -239,8 +238,7 @@ class Benchmark {
             const { tp, fn } = this.baseline[graphName][baselineAlgorithmName].maxTpCommunities[gt.id];
 
             // 5. Get mix of composition; maximum number of nodes in each TP or FN sets is defined by either TP size or its complement
-            // 0 = only TPs; 1 = only FNs --> how many FP vertices should contribute...
-            const mixFactor = 1 - (compositionRatioParam / 100);
+            const mixFactor = 1 - (compositionRatioParam / 100); // 1 = only TPs; 0 = only FNs --> how many FP vertices should contribute...
 
             // NEW SEEDS ARE BASED ON PREVIOUSLY PICKED!!
             const remainingTp = tp.subtract(alreadyPickedNodes);
@@ -270,11 +268,9 @@ class Benchmark {
             // }
             /////
 
-            let realSize = alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize;
-
             // 6. Pick current seed community vertices based on structure parameter
             if (seedStructureParam === RANDOM_STRUCTURE) {
-                // FIXME would be good if not connected...
+                // TODO would be good if not connected...
                 const tpVertices = getRandomItems([...remainingTp.nodes], maxTpVerticesSize).result;
                 const fnVertices = getRandomItems([...remainingFn.nodes], maxFnVerticesSize).result;
 
@@ -284,28 +280,35 @@ class Benchmark {
                 for (let idx of fnVertices) {
                     seedMembership[idx] = seedCommunityId;
                 }
+
+                const realSize = alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize;
+                realSeedCommunitySizes.push(realSize);
+                realSeedCommunityCompositionRatio.push(realSize === 0
+                    ? -1 // to avoid NaNs
+                    : 1 - (alreadyPickedTpNodesSize + maxTpVerticesSize) /  realSize);
             } else if (seedStructureParam === CONNECTED_STRUCTURE) {
-                const currentVisited = alreadyPickedNodes.nodes;
-                const currentQueue = currentVisited.size > 0
-                    ? this.result[graphName][seedCountParam][prevSeedSizeParam][compositionRatioParam][seedStructureParam][algorithmName].queueBFS
+                const currentSelected = alreadyPickedNodes.nodes;
+                const currentQueue = currentSelected.size > 0
+                    ? this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][prevSeedSizeParam][algorithmName].queueBFS
                     : undefined;
 
-                const n = maxTpVerticesSize + maxFnVerticesSize;
-                const { visited, queue } = graph.rankedPartialBFS(n, gt.nodes, currentQueue, currentVisited);
+                const { selected, queue } = graph.rankedPartialCompositionalBFS(maxTpVerticesSize, maxFnVerticesSize, gt.nodes, tp.nodes, fn.nodes, currentQueue, currentSelected);
                 queueBFS = queue;
 
-                for (let idx of visited) {
+                for (let idx of selected) {
                     seedMembership[idx] = seedCommunityId;
                 }
 
+                realSeedCommunitySizes.push(selected.size);
+                const tpRealSize = tp.intersect({ nodes: selected}).size;
+                realSeedCommunityCompositionRatio.push(selected.size === 0
+                    ? -1 // to avoid NaNs
+                    : 1 - (tpRealSize /  selected.size)
+                );
+                // console.log('>>>RESULT', mixFactor, 'are', tpRealSize, selected.size - tpRealSize, 'should be', alreadyPickedTpNodesSize + maxTpVerticesSize, alreadyPickedNodesSize - alreadyPickedTpNodesSize + maxFnVerticesSize);
             } else {
                 throw new Error('UNKNOWN SEED STRUCTURE PARAMETER')
             }
-
-            realSeedCommunitySizes.push(realSize);
-            realSeedCommunityCompositionRatio.push(realSize === 0
-                ? -1 // to avoid NaNs
-                : 1 - (alreadyPickedTpNodesSize + maxTpVerticesSize) /  realSize);
 
             // console.log('>>>>>', {
             //     gtSize: gt.size,

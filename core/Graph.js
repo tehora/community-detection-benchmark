@@ -68,6 +68,73 @@ class Graph {
         }
     }
 
+    rankedPartialCompositionalBFS(tpsCount, fnsCount, gts, tps, fns, currentQueue = null, currentSelected = null) {
+        let queue = currentQueue;
+
+        if (isNil(currentQueue)) {
+            let predicate = (node) => gts.has(node.id);
+            if (fnsCount === 0) {
+                // start from TPs
+                predicate = (node) => tps.has(node.id);
+            } else if (tpsCount === 0) {
+                // start from FNs
+                predicate = (node) => fns.has(node.id);
+            }
+
+            const startNode = find(predicate, this.nodesRanking);
+            queue = [startNode];
+        }
+        // const queue = isNil(currentQueue) ? [find((node) => gts.has(node.id), this.nodesRanking)] : currentQueue;
+        const selected = isNil(currentSelected) ? new Set() : currentSelected;
+        const visited = new Set();
+        // console.log('>START', isNil(currentQueue), queue.length, tpsCount, fnsCount);
+
+        while (queue.length > 0 && (tpsCount > 0 || fnsCount > 0)) {
+            const headNode = queue.shift();
+            const { neighbours, id: headNodeId } = headNode;
+            const isTpNode = tps.has(headNodeId);
+
+            if (!visited.has(headNodeId)) {
+                visited.add(headNodeId);
+                let isSelected = false;
+
+                if (tpsCount > 0 && isTpNode) {
+                    // selected.add(headNodeId);
+                    tpsCount--;
+                    isSelected = true;
+                }
+
+                if (fnsCount > 0 && !isTpNode) {
+                    // selected.add(headNodeId);
+                    fnsCount--;
+                    isSelected = true;
+                }
+                // console.log('>>NODE', headNodeId, isSelected, isTpNode)
+                if (isSelected) {
+                    selected.add(headNodeId);
+                    const rankedNeighbours = this.nodesRanking
+                        .filter((node) => neighbours.has(node) & !selected.has(node.id) && !visited.has(node.id) && gts.has(node.id));
+
+                    for (let i = 0; i < rankedNeighbours.length; i++) {
+                        queue.push(rankedNeighbours[i]);
+                    }
+                }
+            }
+        }
+
+        // At the end push those visited but not selected - could be useful still later
+        for (let node of visited.values()) {
+            if (!selected.has(node)) {
+                queue.push(this.nodesById[node]);
+            }
+        }
+
+        return {
+            selected,
+            queue
+        }
+    }
+
     getNodesRanking(communities = this.groundTruthCommunities) {
         const linksToOtherCommunitiesByNodeId = {};
 

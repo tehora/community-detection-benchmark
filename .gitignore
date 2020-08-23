@@ -1,2 +1,4 @@
 /node_modules/
 .idea
+/notebook/venv/
+/notebook/.ipynb_checkpoints/
