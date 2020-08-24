@@ -6,6 +6,7 @@ const { getAPI: getCommunityDetectionAPI } = require('igraph-community');
 const { stringifyJSON } = require('../core/utils.js');
 const Community = require('./Community.js');
 const Graph = require('./Graph.js');
+const { igraph2nc } = require('./igraph2nc');
 
 const {
     GRAPHS, PARAMETERS, PARAMETERS_STUB,
@@ -26,6 +27,8 @@ class Benchmark {
         this.flatResult = [];
 
         this.bar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
+
+        this.timestamp = new Date().toISOString();
     }
 
     start() {
@@ -87,7 +90,7 @@ class Benchmark {
         }
     }
 
-    runBenchmark() {
+    runBenchmark(makeNcGraphs = true) {
         const constantPerGraphSteps = reduce(
             (val, opts) => {
                 return val * (Array.isArray(opts) ? opts.length : 1);
@@ -110,7 +113,6 @@ class Benchmark {
             };
 
             this.calculateBaseline(graph);
-            // continue;
 
             this.result[graphName] = {};
 
@@ -135,13 +137,16 @@ class Benchmark {
                             };
 
                             for (let algorithmName of values(MODIFIED_ALGORITHMS)) {
+                                const resultId = this.flatResult.length;
+                                // console.log('RESULT!!!!', resultId);
+
                                 const {
                                     seedMembership,
                                     declaredSeedCommunitySizes,
                                     realSeedCommunitySizes,
                                     realSeedCommunityCompositionRatio,
                                     queueBFS
-                                } = this.seedMembershipFactory(graph, algorithmName, { ...parameters, prevSeedSizeParam });
+                                } = this.seedMembershipFactory(graph, algorithmName, { ...parameters, prevSeedSizeParam, resultId });
 
                                 const {
                                     membership,
@@ -157,7 +162,7 @@ class Benchmark {
                                 };
 
                                 this.flatResult.push({
-                                    id: this.flatResult.length,
+                                    id: resultId,
                                     graph: graphName,
                                     algorithm: algorithmName,
 
@@ -176,6 +181,30 @@ class Benchmark {
                                     realSeedCommunityCompositionRatio
                                 });
 
+                                if (makeNcGraphs) {
+                                    let algorithmNameExport = undefined;
+                                    if (algorithmName === MODIFIED_ALGORITHMS.EDGE_BETWEENNESS_SEED) {
+                                        algorithmNameExport = 'GirvanNewmanSeeds';
+                                    }
+                                    if (algorithmName === MODIFIED_ALGORITHMS.LOUVAIN_SEED) {
+                                        algorithmNameExport = 'LouvainSeeds';
+                                    }
+                                    if (algorithmName === MODIFIED_ALGORITHMS.FAST_GREEDY_SEED) {
+                                        algorithmNameExport = 'ClausetNewmanMooreSeeds';
+                                    }
+
+                                    const data = {
+                                        n: graphJSON.n,
+                                        nodes: graphJSON.nodes,
+                                        edges: graphJSON.edges,
+                                        seedMembership,
+                                        algorithmMembership: membership,
+                                        groundTruthMembership: graphJSON.membership
+                                    };
+
+                                    this.saveGraph(resultId, data, algorithmNameExport);
+                                }
+
                                 this.bar.update(++iterations);
                             }
                             prevSeedSizeParam = seedSizeParam;
@@ -187,7 +216,7 @@ class Benchmark {
         this.bar.stop();
     }
 
-    seedMembershipFactory(graph, algorithmName, { seedCountParam, seedSizeParam, compositionRatioParam, seedStructureParam, prevSeedSizeParam }) {
+    seedMembershipFactory(graph, algorithmName, { seedCountParam, seedSizeParam, compositionRatioParam, seedStructureParam, prevSeedSizeParam, resultId }) {
         const { n, name: graphName } = graph.data;
 
         // We'd like to expand previously picked seeds for better comprehension of the algorithms..
@@ -196,6 +225,9 @@ class Benchmark {
             ? undefined
             : this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][prevSeedSizeParam][algorithmName].seedMembership;
         const seedMembership = isNil(prevSeedMembership) ? (new Array(n)).fill(-1) : [...prevSeedMembership];
+
+        // console.log('prevSeedMembership', isNil(prevSeedSizeParam) ? null : prevSeedMembership.toString())
+        // console.log('seedMembership', seedMembership.toString())
 
         const alreadyPickedSeedCommunitiesIds = new Set();
         for (let nodeId = 0; nodeId < seedMembership.length; nodeId++) {
@@ -215,12 +247,11 @@ class Benchmark {
         const declaredSeedCommunitySizes = [];
         const realSeedCommunitySizes = [];
         const realSeedCommunityCompositionRatio = [];
-        let queueBFS = undefined;
+        let queueBFS = {};
 
         for (let seedCommunityId of gtsIds) {
         // for (let seedCommunityId = 0; seedCommunityId < gts.length; seedCommunityId++) {
             const gt = graph.groundTruthCommunities[seedCommunityId];
-
             const alreadyPickedNodes = new Community();
             for (let nodeId = 0; nodeId < seedMembership.length; nodeId++) {
                 if (seedMembership[nodeId] === seedCommunityId) {
@@ -228,6 +259,7 @@ class Benchmark {
                 }
             }
             const alreadyPickedNodesSize = alreadyPickedNodes.size;
+            // console.log('seedCommunityId', seedCommunityId, 'alreadyPickedNodes', alreadyPickedNodes);
 
             // 2. Pick maximum size of seed community; min size is 2, max is actual GT size
             const seedCommunitySize = clamp(2, gt.size, Math.floor(gt.size * (seedSizeParam / 100)));
@@ -289,11 +321,19 @@ class Benchmark {
             } else if (seedStructureParam === CONNECTED_STRUCTURE) {
                 const currentSelected = alreadyPickedNodes.nodes;
                 const currentQueue = currentSelected.size > 0
-                    ? this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][prevSeedSizeParam][algorithmName].queueBFS
+                    ? this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][prevSeedSizeParam][algorithmName].queueBFS[seedCommunityId]
                     : undefined;
 
+                // if (resultId === 230 || resultId === 233 || resultId === 236 || resultId === 239) {
+                //     console.log('currentSelected', currentSelected, 'currentQueue', (currentQueue || []).map(n => n.id))
+                // }
+
                 const { selected, queue } = graph.rankedPartialCompositionalBFS(maxTpVerticesSize, maxFnVerticesSize, gt.nodes, tp.nodes, fn.nodes, currentQueue, currentSelected);
-                queueBFS = queue;
+                queueBFS[seedCommunityId] = queue;
+
+                // if (resultId === 230 || resultId === 233 || resultId === 236 || resultId === 239) {
+                //     console.log('selected result', selected, 'queueu', (queue || []).map(n => n.id))
+                // }
 
                 for (let idx of selected) {
                     seedMembership[idx] = seedCommunityId;
@@ -340,8 +380,18 @@ class Benchmark {
             baseline: this.flatBaseline,
             result: this.flatResult
         });
-        const timestamp = new Date().toISOString();
-        fs.writeFileSync(`${__dirname}/../output/benchmark-${timestamp}.json`, resultString);
+
+        fs.writeFileSync(`${__dirname}/../output/benchmark-${this.timestamp}.json`, resultString);
+    }
+
+    saveGraph(id, data, algorithmName) {
+        const graphString = JSON.stringify(igraph2nc(data, algorithmName));
+        const graphsDir = `${__dirname}/../output/benchmark-${this.timestamp}-graphs`;
+
+        if (!fs.existsSync(graphsDir)){
+            fs.mkdirSync(graphsDir);
+        }
+        fs.writeFileSync(`${graphsDir}/${id}.json`, graphString);
     }
 }
 
