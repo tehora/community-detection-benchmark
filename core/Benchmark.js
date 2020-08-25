@@ -1,7 +1,7 @@
 const fs = require('fs');
 const cliProgress = require('cli-progress');
 const { isNil, range, fromPairs, values, map, clamp, min, reduce } = require('ramda');
-const { getAPI: getCommunityDetectionAPI } = require('igraph-community');
+const { getAPI: getCommunityDetectionAPI, COMPARE_COMMUNITIES_METHODS } = require('igraph-community');
 
 const { stringifyJSON } = require('../core/utils.js');
 const Community = require('./Community.js');
@@ -18,7 +18,7 @@ const {
 class Benchmark {
     constructor() {
         this.runCommunityDetection = null;
-        this.compareCommunitiesNMI = null;
+        this.compareCommunities = null;
 
         this.baseline = fromPairs(map((graph) => [graph.name, {}], GRAPHS));
         this.result = {};
@@ -33,9 +33,9 @@ class Benchmark {
 
     start() {
         getCommunityDetectionAPI().then((api) => {
-            const { runCommunityDetection, compareCommunitiesNMI } = api;
+            const { runCommunityDetection, compareCommunities } = api;
             this.runCommunityDetection = runCommunityDetection.bind(this);
-            this.compareCommunitiesNMI = compareCommunitiesNMI.bind(this);
+            this.compareCommunities = compareCommunities.bind(this);
 
             this.runBenchmark();
             this.saveResult();
@@ -47,7 +47,7 @@ class Benchmark {
         for (let algorithmName of values(BASELINE_ALGORITHMS)) {
             const { modularity, membership } = this.runCommunityDetection(algorithmName, n, edges);
 
-            const nmi = this.compareCommunitiesNMI(graph.groundTruthMembership, membership);
+            const measures = this.getCommunitiesComparisionMeasures(graph.groundTruthMembership, membership);
             const communities = Community.getCommunitiesFromMembership(membership);
             const communitiesCount = communities.length;
 
@@ -70,12 +70,7 @@ class Benchmark {
             // console.log(maxTpCommunities)
 
             this.baseline[graphName][algorithmName] = {
-                membership,
-                modularity,
-                communities,
-                maxTpCommunities,
-                communitiesCount,
-                nmi
+                maxTpCommunities
             };
 
             this.flatBaseline.push({
@@ -84,7 +79,7 @@ class Benchmark {
                 algorithm: algorithmName,
                 membership,
                 modularity,
-                nmi,
+                ...measures,
                 communitiesCount
             })
         }
@@ -153,7 +148,7 @@ class Benchmark {
                                     modularity
                                 } = this.runCommunityDetection(algorithmName, graphJSON.n, graphJSON.edges, { seedMembership });
 
-                                const nmi = this.compareCommunitiesNMI(graph.groundTruthMembership, membership);
+                                const measures = this.getCommunitiesComparisionMeasures(graph.groundTruthMembership, membership);
                                 const communitiesCount = getMaxValue(membership) + 1;
 
                                 this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][seedSizeParam][algorithmName] = {
@@ -173,7 +168,7 @@ class Benchmark {
                                     seedMembership,
                                     membership,
                                     modularity,
-                                    nmi,
+                                    ...measures,
                                     communitiesCount,
 
                                     declaredSeedCommunitySizes,
@@ -392,6 +387,14 @@ class Benchmark {
             fs.mkdirSync(graphsDir);
         }
         fs.writeFileSync(`${graphsDir}/${id}.json`, graphString);
+    }
+
+    getCommunitiesComparisionMeasures(m1, m2) {
+        return {
+            nmi: this.compareCommunities(COMPARE_COMMUNITIES_METHODS.NMI, m1, m2),
+            ri: this.compareCommunities(COMPARE_COMMUNITIES_METHODS.RI, m1, m2),
+            ari: this.compareCommunities(COMPARE_COMMUNITIES_METHODS.ARI, m1, m2)
+        };
     }
 }
 
