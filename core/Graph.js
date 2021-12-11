@@ -1,5 +1,7 @@
 const { isNil, values, find } = require('ramda');
 
+const { getRandomValue } = require('./random');
+
 const Community = require('./Community.js');
 
 class Graph {
@@ -38,56 +40,31 @@ class Graph {
         }
     }
 
-    // TODO composition ratio !!!
-    rankedPartialBFS(n, allowedNodes, currentQueue = null, currentVisited = null) {
-        const queue = isNil(currentQueue) ? [find((node) => allowedNodes.has(node.id), this.nodesRanking)] : currentQueue;
-        const visited = isNil(currentVisited) ? new Set() : currentVisited;
-
-        while (queue.length > 0 && n-- > 0) {
-            const headNode = queue.shift();
-            const { neighbours } = headNode;
-
-            // console.log('HERE!', currentQueue, queue, headNode, neighbours, visited, allowedNodes)
-
-            // TODO THIS IS PROBABLY SLOWs
-            const rankedNeighbours = this.nodesRanking
-                .filter((node) => neighbours.has(node) && !visited.has(node.id) && allowedNodes.has(node.id));
-
-            if (!visited.has(headNode)) {
-                visited.add(headNode.id);
-            }
-
-            for (let i = 0; i < rankedNeighbours.length; i++) {
-                queue.push(rankedNeighbours[i]);
-            }
-        }
-
-        return {
-            visited,
-            queue
-        }
-    }
-
-    rankedPartialCompositionalBFS(tpsCount, fnsCount, gts, tps, fns, currentQueue = null, currentSelected = null) {
+    rankedPartialCompositionalBFS({ tpsCount, fnsCount, gts, tps, fns, currentQueue = null, currentSelected = null, randomStart = true }) {
         let queue = currentQueue;
 
         if (isNil(currentQueue)) {
             let predicate = (node) => gts.has(node.id);
+            let startingNodes = gts;
+
             if (fnsCount === 0) {
                 // start from TPs
                 predicate = (node) => tps.has(node.id);
+                startingNodes = tps;
             } else if (tpsCount === 0) {
                 // start from FNs
                 predicate = (node) => fns.has(node.id);
+                startingNodes = fns;
             }
 
-            const startNode = find(predicate, this.nodesRanking);
+            const startNode = randomStart
+                ? this.nodesById[[...startingNodes][Math.floor(getRandomValue() * startingNodes.size)]]
+                : find(predicate, this.nodesRanking);
             queue = [startNode];
         }
-        // const queue = isNil(currentQueue) ? [find((node) => gts.has(node.id), this.nodesRanking)] : currentQueue;
+
         const selected = isNil(currentSelected) ? new Set() : currentSelected;
         const visited = new Set();
-        // console.log('>START', isNil(currentQueue), queue.length, tpsCount, fnsCount);
 
         while (queue.length > 0 && (tpsCount > 0 || fnsCount > 0)) {
             const headNode = queue.shift();
@@ -99,17 +76,14 @@ class Graph {
                 let isSelected = false;
 
                 if (tpsCount > 0 && isTpNode) {
-                    // selected.add(headNodeId);
                     tpsCount--;
                     isSelected = true;
                 }
 
                 if (fnsCount > 0 && !isTpNode) {
-                    // selected.add(headNodeId);
                     fnsCount--;
                     isSelected = true;
                 }
-                // console.log('>>NODE', headNodeId, isSelected, isTpNode)
                 if (isSelected) {
                     selected.add(headNodeId);
                     const rankedNeighbours = this.nodesRanking
@@ -158,14 +132,14 @@ class Graph {
 
             if (aOtherLinks === bOtherLinks) {
                 if (a.degree === b.degree) {
-                    // randomly select in case of ties
-                    return Math.random() > 0.5 ? -1 : 1;
+                    // Randomly select in case of ties
+                    return getRandomValue() > 0.5 ? -1 : 1;
                 }
-                // higher degree the better
+                // Higher degree the better
                 return b.degree - a.degree
             }
 
-            // less links to other communities the better
+            // Less links to other communities the better
             return aOtherLinks - bOtherLinks;
         })
     }
