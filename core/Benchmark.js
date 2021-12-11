@@ -8,6 +8,8 @@ const Community = require('./Community.js');
 const Graph = require('./Graph.js');
 const { igraph2nc } = require('./igraph2nc');
 
+const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+
 const {
     GRAPHS, PARAMETERS, PARAMETERS_STUB,
     BASELINE_ALGORITHMS, MODIFIED_ALGORITHMS, MODIFIED_ALGORITHMS_COUNTERPARTS,
@@ -20,9 +22,7 @@ const { getRandomItems } = require('./random');
 // - random number generator with seed added
 // - consecutive trials do not depend on previous one (GT seeds and nodes are picked randomly for each trial)
 // - BFS starts from randomly picked node
-
-// TODO
-// - each
+// - for each graph and parameters set algorithms run declared number of trials
 // - save result in both json and csv
 
 class Benchmark {
@@ -45,16 +45,56 @@ class Benchmark {
         this.bar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
 
         this.timestamp = new Date().toISOString();
+
+        this.baselineCsvWriter = createCsvWriter({
+            path: `${__dirname}/../output/${this.timestamp}-baseline.csv`,
+            header: [
+                { id: "id", title: 'id'},
+                { id: "graph", title: 'graph'},
+                { id: "algorithm", title: 'algorithm'},
+                { id: "membership", title: 'membership'},
+                { id: "modularity", title: 'modularity'},
+                { id: "nmi", title: 'nmi'},
+                { id: "ri", title: 'ri'},
+                { id: "ari", title: 'ari'},
+                { id: "communitiesCount", title: 'communities_count'},
+            ]
+        });
+
+        this.resultsCsvWriter = createCsvWriter({
+            path: `${__dirname}/../output/${this.timestamp}-result.csv`,
+            header: [
+                { id: "id", title: "id" },
+                { id: "groupId", title: "group_id" },
+                { id: "groupTrialId", title: "group_trial_id" },
+                { id: "graph", title: "graph" },
+                { id: "algorithm", title: "algorithm" },
+                { id: "seedCountParam", title: "seed_count_param" },
+                { id: "seedSizeParam", title: "seed_size_param" },
+                { id: "compositionRatioParam", title: "composition_ratio_param" },
+                { id: "seedStructureParam", title: "seed_structure_param" },
+                { id: "seedMembership", title: "seed_membership" },
+                { id: "membership", title: "membership" },
+                { id: "modularity", title: "modularity" },
+                { id: "nmi", title: "nmi" },
+                { id: "ri", title: "ri" },
+                { id: "ari", title: "ari" },
+                { id: "communitiesCount", title: "communities_count" },
+                { id: "declaredSeedCommunitySizes", title: "declared_seed_community_sizes" },
+                { id: "realSeedCommunitySizes", title: "real_seed_community_sizes" },
+                { id: "realSeedCommunityCompositionRatio", title: "real_seed_community_composition_ratio" },
+            ]
+        });
     }
 
     start() {
-        getCommunityDetectionAPI().then((api) => {
+        return getCommunityDetectionAPI().then((api) => {
             const { runCommunityDetection, compareCommunities } = api;
             this.runCommunityDetection = runCommunityDetection.bind(this);
             this.compareCommunities = compareCommunities.bind(this);
 
             this.runBenchmark(this.saveGraphs);
-            this.saveResult();
+            return this.saveResult();
         });
     }
 
@@ -111,10 +151,11 @@ class Benchmark {
 
         const steps = reduce((val, graph) => {
             return val + (constantPerGraphSteps *  graph.communities);
-        }, 0 , GRAPHS);
+        }, 0 , GRAPHS) * this.noOfTrials;
 
         this.bar.start(steps, 0);
         let iterations = 0;
+        let groupId = 0;
 
         for (let graphJSON of GRAPHS) {
             const graph = new Graph(graphJSON);
@@ -150,78 +191,86 @@ class Benchmark {
                             };
 
                             for (let algorithmName of values(MODIFIED_ALGORITHMS)) {
-                                const resultId = this.flatResult.length;
+                                for (let groupTrialId = 0; groupTrialId < this.noOfTrials; groupTrialId++) {
+                                    const resultId = this.flatResult.length;
 
-                                if (this.__DEBUG__) {
-                                    console.log('RESULT', resultId);
-                                }
 
-                                const {
-                                    seedMembership,
-                                    declaredSeedCommunitySizes,
-                                    realSeedCommunitySizes,
-                                    realSeedCommunityCompositionRatio,
-                                    queueBFS
-                                } = this.seedMembershipFactory(graph, algorithmName, { ...parameters, prevSeedSizeParam, resultId });
-
-                                const {
-                                    membership,
-                                    modularity
-                                } = this.runCommunityDetection(algorithmName, graphJSON.n, graphJSON.edges, { seedMembership });
-
-                                const measures = this.getCommunitiesComparisonMeasures(graph.groundTruthMembership, membership);
-                                const communitiesCount = getMaxValue(membership) + 1;
-
-                                this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][seedSizeParam][algorithmName] = {
-                                    seedMembership,
-                                    queueBFS
-                                };
-
-                                this.flatResult.push({
-                                    id: resultId,
-                                    graph: graphName,
-                                    algorithm: algorithmName,
-
-                                    ...parameters,
-                                    seedSizeParam: seedSizeParam / 100,
-                                    compositionRatioParam: compositionRatioParam / 100,
-
-                                    seedMembership,
-                                    membership,
-                                    modularity,
-                                    ...measures,
-                                    communitiesCount,
-
-                                    declaredSeedCommunitySizes,
-                                    realSeedCommunitySizes,
-                                    realSeedCommunityCompositionRatio
-                                });
-
-                                if (makeNcGraphs) {
-                                    let algorithmNameExport = undefined;
-                                    if (algorithmName === MODIFIED_ALGORITHMS.EDGE_BETWEENNESS_SEED) {
-                                        algorithmNameExport = 'GirvanNewmanSeeds';
-                                    }
-                                    if (algorithmName === MODIFIED_ALGORITHMS.LOUVAIN_SEED) {
-                                        algorithmNameExport = 'LouvainSeeds';
-                                    }
-                                    if (algorithmName === MODIFIED_ALGORITHMS.FAST_GREEDY_SEED) {
-                                        algorithmNameExport = 'ClausetNewmanMooreSeeds';
+                                    if (this.__DEBUG__) {
+                                        console.log('RESULT', resultId);
                                     }
 
-                                    const data = {
-                                        n: graphJSON.n,
-                                        nodes: graphJSON.nodes,
-                                        edges: graphJSON.edges,
+                                    const {
                                         seedMembership,
-                                        algorithmMembership: membership,
-                                        groundTruthMembership: graphJSON.membership
+                                        declaredSeedCommunitySizes,
+                                        realSeedCommunitySizes,
+                                        realSeedCommunityCompositionRatio,
+                                        queueBFS
+                                    } = this.seedMembershipFactory(graph, algorithmName, { ...parameters, prevSeedSizeParam, resultId });
+
+                                    const {
+                                        membership,
+                                        modularity
+                                    } = this.runCommunityDetection(algorithmName, graphJSON.n, graphJSON.edges, { seedMembership });
+
+                                    const measures = this.getCommunitiesComparisonMeasures(graph.groundTruthMembership, membership);
+                                    const communitiesCount = getMaxValue(membership) + 1;
+
+                                    this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][seedSizeParam][algorithmName] = {
+                                        seedMembership,
+                                        queueBFS
                                     };
 
-                                    this.saveGraph(resultId, data, algorithmNameExport);
-                                }
+                                    this.flatResult.push({
+                                        id: resultId,
 
-                                this.bar.update(++iterations);
+                                        groupId,
+                                        groupTrialId,
+
+                                        graph: graphName,
+                                        algorithm: algorithmName,
+
+                                        ...parameters,
+                                        seedSizeParam: seedSizeParam / 100,
+                                        compositionRatioParam: compositionRatioParam / 100,
+
+                                        seedMembership,
+                                        membership,
+                                        modularity,
+                                        ...measures,
+                                        communitiesCount,
+
+                                        declaredSeedCommunitySizes,
+                                        realSeedCommunitySizes,
+                                        realSeedCommunityCompositionRatio
+                                    });
+
+                                    if (makeNcGraphs) {
+                                        let algorithmNameExport = undefined;
+                                        if (algorithmName === MODIFIED_ALGORITHMS.EDGE_BETWEENNESS_SEED) {
+                                            algorithmNameExport = 'GirvanNewmanSeeds';
+                                        }
+                                        if (algorithmName === MODIFIED_ALGORITHMS.LOUVAIN_SEED) {
+                                            algorithmNameExport = 'LouvainSeeds';
+                                        }
+                                        if (algorithmName === MODIFIED_ALGORITHMS.FAST_GREEDY_SEED) {
+                                            algorithmNameExport = 'ClausetNewmanMooreSeeds';
+                                        }
+
+                                        const data = {
+                                            n: graphJSON.n,
+                                            nodes: graphJSON.nodes,
+                                            edges: graphJSON.edges,
+                                            seedMembership,
+                                            algorithmMembership: membership,
+                                            groundTruthMembership: graphJSON.membership
+                                        };
+
+                                        this.saveGraph(resultId, data, algorithmNameExport);
+                                    }
+
+                                    this.bar.update(++iterations);
+                                }
+                                groupId++;
                             }
                             prevSeedSizeParam = seedSizeParam;
                         }
@@ -274,8 +323,8 @@ class Benchmark {
 
             // 6. Pick current seed community vertices based on structure parameter
             if (seedStructureParam === RANDOM_STRUCTURE) {
-                const tpVertices = getRandomItems(tp.nodes, maxTpVerticesSize).result;
-                const fnVertices = getRandomItems(fn.nodes, maxFnVerticesSize).result;
+                const tpVertices = getRandomItems([...tp.nodes], maxTpVerticesSize).result;
+                const fnVertices = getRandomItems([...fn.nodes], maxFnVerticesSize).result;
 
                 for (let idx of tpVertices) {
                     seedMembership[idx] = seedCommunityId;
@@ -283,7 +332,6 @@ class Benchmark {
                 for (let idx of fnVertices) {
                     seedMembership[idx] = seedCommunityId;
                 }
-
                 const realSize = maxTpVerticesSize + maxFnVerticesSize;
                 realSeedCommunitySizes.push(realSize);
                 realSeedCommunityCompositionRatio.push(realSize === 0
@@ -351,6 +399,13 @@ class Benchmark {
         });
 
         fs.writeFileSync(`${__dirname}/../output/benchmark-${this.timestamp}.json`, resultString);
+
+        return this.baselineCsvWriter.writeRecords(this.flatBaseline).then(() =>
+            this.resultsCsvWriter.writeRecords(this.flatResult)
+        )
+            .then(() => {
+                console.log('...CSV writing DONE');
+            });
     }
 
     saveGraph(id, data, algorithmName) {
