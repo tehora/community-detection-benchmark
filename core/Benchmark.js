@@ -16,7 +16,9 @@ const {
 
 
 class Benchmark {
-    constructor() {
+    constructor({ saveGraphs = true }) {
+        this.saveGraphs = saveGraphs;
+
         this.runCommunityDetection = null;
         this.compareCommunities = null;
 
@@ -37,7 +39,7 @@ class Benchmark {
             this.runCommunityDetection = runCommunityDetection.bind(this);
             this.compareCommunities = compareCommunities.bind(this);
 
-            this.runBenchmark();
+            this.runBenchmark(this.saveGraphs);
             this.saveResult();
         });
     }
