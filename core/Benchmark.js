@@ -1,5 +1,6 @@
 const fs = require('fs');
 const cliProgress = require('cli-progress');
+const seedrandom = require('seedrandom');
 const { isNil, range, fromPairs, values, map, clamp, min, reduce } = require('ramda');
 const { getAPI: getCommunityDetectionAPI, COMPARE_COMMUNITIES_METHODS } = require('igraph-community');
 
@@ -14,10 +15,18 @@ const {
     RANDOM_STRUCTURE, CONNECTED_STRUCTURE
 } = require('./constants');
 
+// TODO:
+// - radnomization with knows SEED
+//
+
 
 class Benchmark {
-    constructor({ saveGraphs = true }) {
+    constructor({ saveGraphs = true, noOfTrials, debug = false, randomSeed = 'detection' }) {
         this.saveGraphs = saveGraphs;
+
+        this.noOfTrials = noOfTrials;
+
+        this.__DEBUG__ = debug;
 
         this.runCommunityDetection = null;
         this.compareCommunities = null;
@@ -31,6 +40,8 @@ class Benchmark {
         this.bar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
 
         this.timestamp = new Date().toISOString();
+
+        this.RNG = seedrandom(randomSeed);
     }
 
     start() {
@@ -69,7 +80,9 @@ class Benchmark {
                 maxTpCommunities[gt.id] = { tp, fn };
             }
 
-            // console.log(maxTpCommunities)
+            if (this.__DEBUG__) {
+                console.log(maxTpCommunities)
+            }
 
             this.baseline[graphName][algorithmName] = {
                 maxTpCommunities
@@ -135,7 +148,10 @@ class Benchmark {
 
                             for (let algorithmName of values(MODIFIED_ALGORITHMS)) {
                                 const resultId = this.flatResult.length;
-                                // console.log('RESULT!!!!', resultId);
+
+                                if (this.__DEBUG__) {
+                                    console.log('RESULT', resultId);
+                                }
 
                                 const {
                                     seedMembership,
@@ -223,8 +239,11 @@ class Benchmark {
             : this.result[graphName][seedCountParam][seedStructureParam][compositionRatioParam][prevSeedSizeParam][algorithmName].seedMembership;
         const seedMembership = isNil(prevSeedMembership) ? (new Array(n)).fill(-1) : [...prevSeedMembership];
 
-        // console.log('prevSeedMembership', isNil(prevSeedSizeParam) ? null : prevSeedMembership.toString())
-        // console.log('seedMembership', seedMembership.toString())
+        if (this.__DEBUG__) {
+            console.log('prevSeedMembership', isNil(prevSeedSizeParam) ? null : prevSeedMembership.toString())
+            console.log('seedMembership', seedMembership.toString())
+        }
+
 
         const alreadyPickedSeedCommunitiesIds = new Set();
         for (let nodeId = 0; nodeId < seedMembership.length; nodeId++) {
@@ -233,7 +252,10 @@ class Benchmark {
                 alreadyPickedSeedCommunitiesIds.add(seedCommunityId);
             }
         }
-        // console.log({ alreadyPickedSeedCommunitiesIds, seedMembership});
+
+        if (this.__DEBUG__) {
+            console.log({ alreadyPickedSeedCommunitiesIds, seedMembership});
+        }
 
         // 1. Pick ground-truth (GT) communities randomly based on seedCountParam
         // unless we work on previously picked communities...
@@ -256,7 +278,10 @@ class Benchmark {
                 }
             }
             const alreadyPickedNodesSize = alreadyPickedNodes.size;
-            // console.log('seedCommunityId', seedCommunityId, 'alreadyPickedNodes', alreadyPickedNodes);
+
+            if (this.__DEBUG__) {
+                console.log('seedCommunityId', seedCommunityId, 'alreadyPickedNodes', alreadyPickedNodes);
+            }
 
             // 2. Pick maximum size of seed community; min size is 2, max is actual GT size
             const seedCommunitySize = clamp(2, gt.size, Math.floor(gt.size * (seedSizeParam / 100)));
@@ -281,8 +306,9 @@ class Benchmark {
             maxTpVerticesSize -= alreadyPickedTpNodesSize;
             maxFnVerticesSize -= (alreadyPickedNodesSize - alreadyPickedTpNodesSize);
 
-            // console.log({ maxTpVerticesSize, maxFnVerticesSize, seedCommunityId, alreadyPickedNodes, tp, gt})
-
+            if (this.__DEBUG__) {
+                console.log({ maxTpVerticesSize, maxFnVerticesSize, seedCommunityId, alreadyPickedNodes, tp, gt})
+            }
             // NOTE: WHEN tp equals gt, then fn are empty - for 0 mixFactor we have empty seeds then, so let's pick,  some remaining from tp....
             // let remainingCount = seedCommunitySize - (alreadyPickedNodesSize + maxTpVerticesSize + maxFnVerticesSize);
             // if (remainingCount > 0 && mixFactor) {
@@ -299,7 +325,6 @@ class Benchmark {
 
             // 6. Pick current seed community vertices based on structure parameter
             if (seedStructureParam === RANDOM_STRUCTURE) {
-                // TODO would be good if not connected...
                 const tpVertices = getRandomItems([...remainingTp.nodes], maxTpVerticesSize).result;
                 const fnVertices = getRandomItems([...remainingFn.nodes], maxFnVerticesSize).result;
 
@@ -342,24 +367,28 @@ class Benchmark {
                     ? -1 // to avoid NaNs
                     : 1 - (tpRealSize /  selected.size)
                 );
-                // console.log('>>>RESULT', mixFactor, 'are', tpRealSize, selected.size - tpRealSize, 'should be', alreadyPickedTpNodesSize + maxTpVerticesSize, alreadyPickedNodesSize - alreadyPickedTpNodesSize + maxFnVerticesSize);
+                if (this.__DEBUG__) {
+                    console.log('>>>RESULT', mixFactor, 'are', tpRealSize, selected.size - tpRealSize, 'should be', alreadyPickedTpNodesSize + maxTpVerticesSize, alreadyPickedNodesSize - alreadyPickedTpNodesSize + maxFnVerticesSize);
+                }
             } else {
                 throw new Error('UNKNOWN SEED STRUCTURE PARAMETER')
             }
 
-            // console.log('>>>>>', {
-            //     gtSize: gt.size,
-            //     alreadyPickedNodesSize,
-            //     seedSizeParam,
-            //     seedCommunitySize,
-            //     compositionRatioParam,
-            //     mixFactor,
-            //     RTP_NSIZE: remainingTp.size,
-            //     RFN_NSIZE: remainingFn.size,
-            //     alreadyPickedTpNodesSize,
-            //     maxTpVerticesSize,
-            //     maxFnVerticesSize
-            // });
+            if (this.__DEBUG__) {
+                console.log('>>>>>', {
+                    gtSize: gt.size,
+                    alreadyPickedNodesSize,
+                    seedSizeParam,
+                    seedCommunitySize,
+                    compositionRatioParam,
+                    mixFactor,
+                    RTP_NSIZE: remainingTp.size,
+                    RFN_NSIZE: remainingFn.size,
+                    alreadyPickedTpNodesSize,
+                    maxTpVerticesSize,
+                    maxFnVerticesSize
+                });
+            }
         }
 
         // At the end we'd probably like to filter out results with weak real seeds sizes and composition ratios...
@@ -420,7 +449,7 @@ function getRandomItems(arr, n) {
     }
 
     while (n--) {
-        const x = Math.floor(Math.random() * len);
+        const x = Math.floor(this.RNG() * len);
         const idx = x in taken ? taken[x] : x;
         result[n] = arr[idx];
         indexes[n] = idx;
