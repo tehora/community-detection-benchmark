@@ -3,3 +3,5 @@
 /notebook/venv/
 /notebook/.ipynb_checkpoints/
 /notebook/OldPlots.ipynb
+
+/output
