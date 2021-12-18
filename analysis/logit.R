@@ -93,5 +93,25 @@ pl <- ggplot(long, aes(x=as.factor(centrality), y=value)) +  #facet_wrap(~as.fac
 print(pl)
 dev.off()
 
+# example distributions of
+k <- subset(m, graph=="karate")
+xa <- subset(k, seed_structure_param=="RANDOM" & seed_size_param == 0.25)
+
+algos <- c("fastGreedySeed", "louvainSeed", "edgeBetweennessSeed")
+n <- read.table("2021-12-11T18:06:43.891Z-baseline.csv", sep=",", header=T)
+bench <- vector("numeric")
+for (i in 1:3) {bench[i] <- (subset(n, graph=="karate" & algorithm == strsplit(algos[i], "Seed")[1])$ari)}
+
+library(dplyr)
+pdf("karate_ari.pdf", 20,10)
+pl <- ggplot(xa, aes(x=as.factor(seed_count_param), y=ari)) + facet_wrap(~as.factor(algorithm), scales="free") +
+  xlab("Number of communities") + ylab("ARI") + geom_violin() + geom_boxplot(width=0.05) +
+  geom_hline(data=filter(xa, algorithm=="fastGreedySeed"), aes(yintercept=bench[1])) +
+  geom_hline(data=filter(xa, algorithm=="louvainSeed"), aes(yintercept=bench[2])) +
+  geom_hline(data=filter(xa, algorithm=="edgeBetweennessSeed"), aes(yintercept=bench[3])) +
+  theme_minimal()
+print(pl)
+dev.off()
+
 
 
